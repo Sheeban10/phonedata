@@ -1,11 +1,14 @@
 package com.sheeban.phonedata
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.net.ConnectivityManager
 import android.os.BatteryManager
+import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Handler
@@ -14,6 +17,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
@@ -41,13 +45,14 @@ class MainActivity : AppCompatActivity() {
     private var refreshCaptureCount = 0
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val firestore = FirebaseFirestore.getInstance()
-    private val delayInMillis: Long = 15 * 60 * 1000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         val view = binding.root
         setContentView(view)
+
+        createNotificationChannel()
 
         timDate = binding.tvTimeDate
         captureCount = binding.tvCaptureCount
@@ -60,6 +65,7 @@ class MainActivity : AppCompatActivity() {
 
         refreshCaptureCount = getRefreshCount()
         captureCount.text = "$refreshCaptureCount"
+        location()
 
         frequency.setText("15")
 
@@ -75,15 +81,30 @@ class MainActivity : AppCompatActivity() {
 
     }
 
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "battery_low_channel"
+            val channelName = "Battery Low Channel"
+            val channelDescription = "Channel for battery low notifications"
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(channelId, channelName, importance).apply {
+                description = channelDescription
+            }
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
     private fun startDataRefresh() {
         val frequencyValue = frequency.text.toString().toLongOrNull()
         if (frequencyValue != null && frequencyValue > 0) {
             refreshHandler.postDelayed(object : Runnable {
                 override fun run() {
                     fetchData()
-                    refreshHandler.postDelayed(this, delayInMillis)
+                    refreshHandler.postDelayed(this, frequencyValue * 60 * 1000L)
                 }
-            }, delayInMillis)
+            }, frequencyValue * 60 * 1000L)
         }
     }
 
@@ -92,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         checkConnectivity()
         batteryCharging()
         location()
-        refreshCaptureCount ++
+        refreshCaptureCount++
 
 
         val currentTime = timDate.text.toString()
@@ -148,6 +169,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         charge.text = "$batteryLevel%"
+
+        if (batteryLevel < 20 && !isCharging) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            val channelId = "battery_low_channel"
+
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.ic_battery_low)
+                .setContentTitle("Battery Low")
+                .setContentText("Your battery is below 20%. Charge your device.")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .build()
+
+            // Use a unique notification ID to avoid overwriting previous notifications
+            val notificationId = 1
+            notificationManager.notify(notificationId, notification)
+        }
     }
 
     private fun time(){
