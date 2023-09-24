@@ -11,8 +11,13 @@ import android.os.BatteryManager
 import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
+import android.os.Debug
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -27,24 +32,27 @@ import com.sheeban.phonedata.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.properties.Delegates
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var fusedLocationClient : FusedLocationProviderClient
-    lateinit var timDate : TextView
-    lateinit var captureCount : TextView
-    lateinit var frequency : EditText
-    lateinit var connectivity : TextView
-    lateinit var charging : TextView
-    lateinit var charge : TextView
-    lateinit var locationTv : TextView
-    lateinit var refresh : Button
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    lateinit var timDate: TextView
+    lateinit var captureCount: TextView
+    lateinit var frequency: EditText
+    lateinit var connectivity: TextView
+    lateinit var charging: TextView
+    lateinit var charge: TextView
+    lateinit var locationTv: TextView
+    lateinit var refresh: Button
 
 
     private var refreshCaptureCount = 0
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val firestore = FirebaseFirestore.getInstance()
+    private val handler = Handler(Looper.getMainLooper())
+    private var delayMillis: Long = 900000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,20 +73,46 @@ class MainActivity : AppCompatActivity() {
 
         refreshCaptureCount = getRefreshCount()
         captureCount.text = "$refreshCaptureCount"
-        location()
 
-        frequency.setText("15")
 
-        startDataRefresh()
+        frequency.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+            }
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+
+            }
+
+            override fun afterTextChanged(s: Editable?) {
+                val newValue = s.toString().toIntOrNull() ?: 15
+
+                delayMillis = (newValue * 60000).toLong()
+                scheduleFetchData()
+            }
+        })
 
         fetchData()
+
+        scheduleFetchData()
 
         refresh.setOnClickListener {
             captureCount.text = "$refreshCaptureCount"
             saveRefreshCount(refreshCaptureCount)
-            fetchData()
+                fetchData()
         }
 
+    }
+
+    private fun scheduleFetchData() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                // Call the fetchData() function
+                fetchData()
+
+                // Schedule the next fetchData() call
+                handler.postDelayed(this, delayMillis)
+            }
+        }, delayMillis)
     }
 
     private fun createNotificationChannel() {
@@ -96,17 +130,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startDataRefresh() {
-        val frequencyValue = frequency.text.toString().toLongOrNull()
-        if (frequencyValue != null && frequencyValue > 0) {
-            refreshHandler.postDelayed(object : Runnable {
-                override fun run() {
-                    fetchData()
-                    refreshHandler.postDelayed(this, frequencyValue * 60 * 1000L)
-                }
-            }, frequencyValue * 60 * 1000L)
-        }
-    }
 
     private fun fetchData() {
         time()
@@ -125,7 +148,7 @@ class MainActivity : AppCompatActivity() {
         val dataEntry = DataEntry(
             timestamp = currentTime,
             captureCount = refreshCaptureCount,
-            frequency = frequency.text.toString().toInt(),
+            frequency = delayMillis.toInt()/60000,
             connectivity = connectivityStatus,
             batteryCharging = batteryChargingStatus,
             batteryCharge = batteryChargePercentage,
@@ -162,10 +185,12 @@ class MainActivity : AppCompatActivity() {
 
         val isCharging = batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING
         val isDischarging = batteryStatus == BatteryManager.BATTERY_STATUS_DISCHARGING
+        val isFull = batteryStatus == BatteryManager.BATTERY_STATUS_FULL
 
         when{
             isCharging -> charging.text ="ON"
             isDischarging -> charging.text = "OFF"
+            isFull -> charging.text = "FULL"
         }
 
         charge.text = "$batteryLevel%"
@@ -201,8 +226,10 @@ class MainActivity : AppCompatActivity() {
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
+        val locationEnabledBefore = isLocationEnabled()
+
         if (ContextCompat.checkSelfPermission(
-                this,Manifest.permission.ACCESS_FINE_LOCATION
+                this,Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED){
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null){
@@ -214,15 +241,41 @@ class MainActivity : AppCompatActivity() {
                     )
                     if (address != null && address.isNotEmpty()){
                         locationTv.text = "${location.longitude}, ${location.latitude}"
+
+                        if (!locationEnabledBefore) {
+                            Toast.makeText(this, "Location is enabled", Toast.LENGTH_SHORT).show()
+                        }
+                        // Update the preference to indicate that location has been enabled
+                        getSharedPreferences("MyPrefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean("location_enabled", true)
+                            .apply()
+                    } else{
+                        Toast.makeText(this, "Error Getting Location", Toast.LENGTH_SHORT).show()
                     }
                 } else{
-                    Toast.makeText(this, "Turn on the location and restart the app", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Turn on the location and restart app", Toast.LENGTH_SHORT).show()
                 }
             }
         } else{
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), 123)
         }
     }
+
+    private fun isLocationEnabled():Boolean{
+        val locationMode: Int
+        try {
+            locationMode = Settings.Secure.getInt(
+                contentResolver,
+                Settings.Secure.LOCATION_MODE
+            )
+        } catch (e: Settings.SettingNotFoundException) {
+            e.printStackTrace()
+            return false
+        }
+        return locationMode != Settings.Secure.LOCATION_MODE_OFF
+    }
+
 
     private fun getRefreshCount(): Int{
         val sharedPreferences = getPreferences(Context.MODE_PRIVATE)
@@ -237,7 +290,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        refreshHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
+        refreshHandler.removeCallbacksAndMessages(null)
     }
 }

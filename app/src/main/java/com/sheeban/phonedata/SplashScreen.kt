@@ -16,7 +16,9 @@ class SplashScreen : AppCompatActivity() {
     private val permissionRequestCode = 123
     private val permissions = arrayOf(
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.ACCESS_FINE_LOCATION
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS,
+        Manifest.permission.BATTERY_STATS
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
